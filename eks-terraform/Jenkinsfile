@@ -5,15 +5,17 @@ pipeline {
         booleanParam(
             name: 'DESTROY_INFRA',
             defaultValue: false,
-            description: ' Destroy ALL Terraform-managed infrastructure (EKS, VPC, etc.)'
+            description: '⚠️ Destroy ALL Terraform-managed infrastructure (EKS, VPC, etc.)'
         )
     }
 
     environment {
         AWS_REGION = 'us-east-1'
-        DOCKERHUB_USERNAME = 'your_dockerhub_username'
-        BACKEND_IMAGE = 'react-todo-backend'
-        FRONTEND_IMAGE = 'react-todo-frontend'
+        DOCKERHUB_USERNAME = 'peterukpabi4'
+        FRONTEND_IMAGE = 'eks-react-todo'
+        BACKEND_IMAGE  = 'eks-react-todo-backend'
+        EKS_CLUSTER_NAME = 'my-cluster'
+        TAG = "${env.BUILD_NUMBER}"  // dynamic image tag
     }
 
     stages {
@@ -25,15 +27,13 @@ pipeline {
         }
 
         stage('Terraform Init & Apply (EKS)') {
-            when {
-                expression { params.DESTROY_INFRA == false }
-            }
+            when { expression { params.DESTROY_INFRA == false } }
             steps {
                 withCredentials([
                     [$class: 'AmazonWebServicesCredentialsBinding',
                      credentialsId: 'aws-credentials']
                 ]) {
-                    dir('terraform/eks') {
+                    dir('eks-terraform') {
                         sh '''
                           terraform init
                           terraform validate
@@ -45,27 +45,23 @@ pipeline {
         }
 
         stage('Configure AWS & EKS') {
-            when {
-                expression { params.DESTROY_INFRA == false }
-            }
+            when { expression { params.DESTROY_INFRA == false } }
             steps {
                 withCredentials([
                     [$class: 'AmazonWebServicesCredentialsBinding',
                      credentialsId: 'aws-credentials']
                 ]) {
-                    sh '''
-                      aws eks update-kubeconfig \
-                        --region $AWS_REGION \
-                        --name my-cluster
-                    '''
+                    sh """
+                      aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER_NAME
+                      kubectl cluster-info
+                      kubectl get nodes
+                    """
                 }
             }
         }
 
         stage('Docker Login') {
-            when {
-                expression { params.DESTROY_INFRA == false }
-            }
+            when { expression { params.DESTROY_INFRA == false } }
             steps {
                 withCredentials([
                     usernamePassword(
@@ -74,45 +70,56 @@ pipeline {
                         passwordVariable: 'DOCKER_PASS'
                     )
                 ]) {
-                    sh '''
-                      echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                    '''
+                    sh 'echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin'
                 }
             }
         }
 
         stage('Build Docker Images') {
-            when {
-                expression { params.DESTROY_INFRA == false }
-            }
+            when { expression { params.DESTROY_INFRA == false } }
             steps {
-                sh '''
-                  docker build -t $DOCKERHUB_USERNAME/$BACKEND_IMAGE:latest backend
-                  docker build -t $DOCKERHUB_USERNAME/$FRONTEND_IMAGE:latest frontend
-                '''
+                dir('backend') {
+                    sh "docker build -t $DOCKERHUB_USERNAME/$BACKEND_IMAGE:$TAG ."
+                }
+                dir('dive-react-app') {
+                    sh "docker build -t $DOCKERHUB_USERNAME/$FRONTEND_IMAGE:$TAG ."
+                }
             }
         }
 
         stage('Push Docker Images') {
-            when {
-                expression { params.DESTROY_INFRA == false }
-            }
+            when { expression { params.DESTROY_INFRA == false } }
             steps {
-                sh '''
-                  docker push $DOCKERHUB_USERNAME/$BACKEND_IMAGE:latest
-                  docker push $DOCKERHUB_USERNAME/$FRONTEND_IMAGE:latest
-                '''
+                sh """
+                  docker push $DOCKERHUB_USERNAME/$BACKEND_IMAGE:$TAG
+                  docker push $DOCKERHUB_USERNAME/$FRONTEND_IMAGE:$TAG
+                """
             }
         }
 
-        stage('Deploy to EKS') {
-            when {
-                expression { params.DESTROY_INFRA == false }
-            }
+        stage('Update YAMLs & Deploy to EKS') {
+            when { expression { params.DESTROY_INFRA == false } }
             steps {
-                sh '''
-                  kubectl apply -f k8s/
-                '''
+                dir('eks-terraform') {
+                    sh """
+                      # Update Docker image tags in YAML manifests
+                      sed -i 's|image: .*eks-react-todo-backend.*|image: $DOCKERHUB_USERNAME/$BACKEND_IMAGE:$TAG|g' backend.yaml
+                      sed -i 's|image: .*eks-react-todo.*|image: $DOCKERHUB_USERNAME/$FRONTEND_IMAGE:$TAG|g' frontend.yaml
+
+                      # Apply all manifests
+                      kubectl apply -f ./configmap.yaml
+                      kubectl apply -f ./secret.yaml
+                      kubectl apply -f ./mongo-deployment.yaml
+                      kubectl apply -f ./mongo-service.yaml
+                      kubectl apply -f ./frontend.yaml
+                      kubectl apply -f ./backend.yaml
+
+                      # Wait for deployments
+                      kubectl rollout status deployment/react-todo-frontend --timeout=300s
+                      kubectl rollout status deployment/react-todo-backend --timeout=300s
+                      kubectl rollout status deployment/mongo --timeout=300s
+                    """
+                }
             }
         }
 
@@ -120,15 +127,13 @@ pipeline {
            DESTROY STAGE (MANUAL)
            =============================== */
         stage('Terraform Destroy (EKS & Infra)') {
-            when {
-                expression { params.DESTROY_INFRA == true }
-            }
+            when { expression { params.DESTROY_INFRA == true } }
             steps {
                 withCredentials([
                     [$class: 'AmazonWebServicesCredentialsBinding',
                      credentialsId: 'aws-credentials']
                 ]) {
-                    dir('terraform/eks') {
+                    dir('eks-terraform') {
                         sh '''
                           terraform init
                           terraform destroy -auto-approve
@@ -144,10 +149,10 @@ pipeline {
             sh 'docker logout || true'
         }
         failure {
-            echo ' Pipeline failed!'
+            echo '❌ Pipeline failed!'
         }
         success {
-            echo ' Pipeline completed successfully!'
+            echo '✅ Pipeline completed successfully!'
         }
     }
 }
