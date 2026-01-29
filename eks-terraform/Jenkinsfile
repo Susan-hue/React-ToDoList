@@ -38,18 +38,28 @@ pipeline {
             }
         }
 
-        stage('Terraform - Create/Update EKS Cluster') {
-            when { expression { params.SKIP_INFRA == false } }
-            steps {
-                dir('eks-terraform') {
-                    sh '''
-                    terraform init
-                    terraform plan -out=tfplan
-                    terraform apply -auto-approve tfplan
-                    '''
-                }
+       stage('Terraform - Create/Update EKS Cluster') {
+    when { expression { params.SKIP_INFRA == false } }
+    steps {
+        withCredentials([usernamePassword(
+            credentialsId: 'aws-credentials',
+            usernameVariable: 'AWS_ACCESS_KEY_ID',
+            passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+        )]) {
+            dir('eks-terraform') {
+                sh '''
+                export AWS_DEFAULT_REGION=us-east-1
+
+                terraform init
+                terraform validate
+                terraform plan -out=tfplan
+                terraform apply -auto-approve tfplan
+                '''
             }
         }
+    }
+}
+
 
         stage('Configure AWS and EKS') {
             steps {
