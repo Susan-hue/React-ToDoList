@@ -48,20 +48,29 @@ pipeline {
             }
         }
 
-        stage('Configure AWS and EKS') {
-            steps {
-                sh """
-                aws configure set aws_access_key_id ${AWS_ACCESS_KEY_ID}
-                aws configure set aws_secret_access_key ${AWS_SECRET_ACCESS_KEY}
-                aws configure set region ${AWS_DEFAULT_REGION}
+       stage('Configure AWS and EKS') {
+    steps {
+        withCredentials([usernamePassword(
+            credentialsId: 'aws-credentials',
+            usernameVariable: 'AWS_ACCESS_KEY_ID',
+            passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+        )]) {
+            sh '''
+            aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID"
+            aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY"
+            aws configure set region us-east-1
 
-                aws eks update-kubeconfig --region ${EKS_REGION} --name ${EKS_CLUSTER_NAME}
+            aws sts get-caller-identity
 
-                kubectl cluster-info
-                kubectl get nodes
-                """
-            }
+            aws eks update-kubeconfig --region us-east-1 --name dive-app-cluster
+
+            kubectl cluster-info
+            kubectl get nodes
+            '''
         }
+    }
+}
+
 
         stage('Docker Login') {
             steps {
