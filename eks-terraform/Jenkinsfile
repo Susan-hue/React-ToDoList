@@ -44,24 +44,23 @@ pipeline {
             }
         }
         
-stage('Configure AWS & EKS') {
-    when { expression { params.DESTROY_INFRA == false } }
-    steps {
-        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
-            sh '''
-                export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-                export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-                export AWS_DEFAULT_REGION=$AWS_REGION
+        stage('Configure AWS & EKS') {
+            when { expression { params.DESTROY_INFRA == false } }
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
+                    sh '''
+                        export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                        export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                        export AWS_DEFAULT_REGION=$AWS_REGION
 
-                aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER_NAME
+                        aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER_NAME
 
-                kubectl cluster-info
-                kubectl get nodes
-            '''
+                        kubectl cluster-info
+                        kubectl get nodes
+                    '''
+                }
+            }
         }
-    }
-}
-
 
         stage('Docker Login') {
             when { expression { params.DESTROY_INFRA == false } }
@@ -103,25 +102,33 @@ stage('Configure AWS & EKS') {
         stage('Update YAMLs & Deploy to EKS') {
             when { expression { params.DESTROY_INFRA == false } }
             steps {
-                dir('eks-terraform') {
-                    sh """
-                      # Update Docker image tags in YAML manifests
-                      sed -i 's|image: .*eks-react-todo-backend.*|image: $DOCKERHUB_USERNAME/$BACKEND_IMAGE:$TAG|g' backend.yaml
-                      sed -i 's|image: .*eks-react-todo.*|image: $DOCKERHUB_USERNAME/$FRONTEND_IMAGE:$TAG|g' frontend.yaml
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
+                    dir('eks-terraform') {
+                        sh """
+                          # Update kubeconfig for EKS access
+                          export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                          export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                          export AWS_DEFAULT_REGION=$AWS_REGION
+                          aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER_NAME
 
-                      # Apply all manifests
-                      kubectl apply -f ./configmap.yaml
-                      kubectl apply -f ./secret.yaml
-                      kubectl apply -f ./mongo-deployment.yaml
-                      kubectl apply -f ./mongo-service.yaml
-                      kubectl apply -f ./frontend.yaml
-                      kubectl apply -f ./backend.yaml
+                          # Update Docker image tags in YAML manifests
+                          sed -i 's|image: .*eks-react-todo-backend.*|image: $DOCKERHUB_USERNAME/$BACKEND_IMAGE:$TAG|g' backend.yaml
+                          sed -i 's|image: .*eks-react-todo.*|image: $DOCKERHUB_USERNAME/$FRONTEND_IMAGE:$TAG|g' frontend.yaml
 
-                      # Wait for deployments
-                      kubectl rollout status deployment/react-todo-frontend --timeout=300s
-                      kubectl rollout status deployment/react-todo-backend --timeout=300s
-                      kubectl rollout status deployment/mongo --timeout=300s
-                    """
+                          # Apply all manifests
+                          kubectl apply -f ./configmap.yaml
+                          kubectl apply -f ./secret.yaml
+                          kubectl apply -f ./mongo-deployment.yaml
+                          kubectl apply -f ./mongo-service.yaml
+                          kubectl apply -f ./frontend.yaml
+                          kubectl apply -f ./backend.yaml
+
+                          # Wait for deployments
+                          kubectl rollout status deployment/react-todo-frontend --timeout=300s
+                          kubectl rollout status deployment/react-todo-backend --timeout=300s
+                          kubectl rollout status deployment/mongo --timeout=300s
+                        """
+                    }
                 }
             }
         }
