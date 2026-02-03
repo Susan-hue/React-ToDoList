@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: react-todo-backend
-        image: peterukpabi4/eks-react-todo-backend
+        image: peterukpabi4/eks-react-todo-backend:20
         ports:
         - containerPort: 5000
         env:
