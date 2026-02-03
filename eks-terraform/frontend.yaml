@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: react-todo-frontend
-        image: peterukpabi4/eks-react-todo:v1
+        image: peterukpabi4/eks-react-todo:20
 
         ports:
         - containerPort: 80
