@@ -11,7 +11,7 @@ pipeline {
 
     environment {
         AWS_REGION = 'us-east-1'
-        DOCKERHUB_USERNAME = 'peterukpabi4'
+        DOCKERHUB_USERNAME = 'susan22283'
         FRONTEND_IMAGE = 'eks-react-todo'
         BACKEND_IMAGE  = 'eks-react-todo-backend'
         EKS_CLUSTER_NAME = 'my-cluster'
